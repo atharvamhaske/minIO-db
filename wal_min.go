@@ -52,28 +52,26 @@ func validateSum(data []byte) bool {
 }
 
 const (
-	offSet = 8
+	offSetSize = 8
 	checkSumSize = 32
 )
 // this function takes raw data in bytes and wraps it in protective Envelope(header and trailer) and returns final byte slice ready for the disk
-func prepareBody(offset uint64, data []byte) ([]byte, error) {
+func prepareBody(offset uint64, data []byte) []byte {
 	// we are using 8 bytes for offset, len(data) bytes for data and 32 bytes for checksum
-	buffLen := offSet + len(data)+ checkSumSize
+	buffLen := offSetSize + len(data)+ checkSumSize
 	buff := make([]byte, buffLen)
 	
 	// write the offset(header) directly
+	binary.BigEndian.PutUint64(buff[:offSetSize], offset)
+	copy(buff[offSetSize:], data)
 	
-	if err := binary.Write(buff, binary.BigEndian, offset); err != nil {
-		return nil, err
-	}
-	if _, err := buff.Write(data); err != nil {
-		return nil, err
-	}
+	// calculate CheckSum for hash over Header + Body (everything before the checksum slot)
+	payloadToChek := buff[:offSetSize+len(data)]
+	sum := checkSum(payloadToChek)
 	
-	// calculate checksum
-	checkSum := checkSum(buff)
-	_, err := buff.Write(checkSum[:])
-	return buff.Bytes(), err
+	// write the checkSum (trailer) i.e copy the result into last 32 bytes of our buffer.
+	copy(buff[len(buff)- checkSumSize:], sum[:])
+	return buff
 }
 
 //main contracts start here like Append, Read and LastRecord
