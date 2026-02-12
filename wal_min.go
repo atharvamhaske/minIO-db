@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strconv"
 	"sync"
 
@@ -42,7 +43,7 @@ func checkSum(buff *bytes.Buffer) [32]byte {
 	return sha256.Sum256(buff.Bytes())
 }
 
-// total trailer size is 36 bytes in which checksum is only 32 bytes and rest 4 bytes are mysterious 
+// total trailer size is 36 bytes in which checksum is only 32 bytes and rest 4 bytes are mysterious
 // in most database implementations these 4 bytes are usually Record Length or TimeStamp.
 func validateSum(data []byte) bool {
 	var storedCheckSum [32]byte
@@ -52,33 +53,91 @@ func validateSum(data []byte) bool {
 }
 
 const (
-	offSetSize = 8
+	offSetSize   = 8
 	checkSumSize = 32
 )
+
 // this function takes raw data in bytes and wraps it in protective Envelope(header and trailer) and returns final byte slice ready for the disk
 func prepareBody(offset uint64, data []byte) []byte {
 	// we are using 8 bytes for offset, len(data) bytes for data and 32 bytes for checksum
-	buffLen := offSetSize + len(data)+ checkSumSize
+	buffLen := offSetSize + len(data) + checkSumSize
 	buff := make([]byte, buffLen)
-	
+
 	// write the offset(header) directly
 	binary.BigEndian.PutUint64(buff[:offSetSize], offset)
 	copy(buff[offSetSize:], data)
-	
+
 	// calculate CheckSum for hash over Header + Body (everything before the checksum slot)
-	payloadToChek := buff[:offSetSize+len(data)]
-	sum := checkSum(payloadToChek)
-	
+	payloadToCheck := buff[:offSetSize+len(data)]
+	sum := checkSum(bytes.NewBuffer(payloadToCheck))
+
 	// write the checkSum (trailer) i.e copy the result into last 32 bytes of our buffer.
-	copy(buff[len(buff)- checkSumSize:], sum[:])
+	copy(buff[len(buff)-checkSumSize:], sum[:])
 	return buff
 }
 
-//main contracts start here like Append, Read and LastRecord
+// main contracts start here like Append, Read and LastRecord
 func (w *MinWAL) Append(ctx context.Context, data []byte) (uint64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	nextOffSet := w.length + 1
+
+	buff := prepareBody(nextOffSet, data)
+
+	input := &minio.PutObjectOptions{
+		ContentType: "application/octet-stream",
+	}
+
+	input.SetMatchETagExcept("*")
+
+	_, err := w.client.PutObject(
+		ctx,
+		w.bucket,
+		w.getObjectKey(nextOffSet),
+		bytes.NewReader(buff),
+		int64(len(buff)),
+		*input)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to pute object on MinIO: %w", err)
+	}
+	w.length = nextOffSet
+	return nextOffSet, nil
+}
+
+func (w *MinWAL) Read(ctx context.Context, offset uint64) (Record, error) {
+	key := w.getObjectKey(offset)
+	input := minio.GetObjectOptions{}
+
+	object, err := w.client.GetObject(ctx, w.bucket, key, input)
+	if err != nil {
+		return Record{}, fmt.Errorf("failed to start get objects: %w", err)
+	}
+	defer object.Close()
+
+	// read all bytes into memory
+	data, err := io.ReadAll(object)
+	if err != nil {
+		// this is where we can usually get "Key Not Found" errors
+		return Record{}, fmt.Errorf("failed to read object body from MinIO")
+	}
+	// validate length
+	if len(data) < 40 {
+		return Record{}, fmt.Errorf("invalid data, data is too short")
+	}
 	
-	buff, err ;= prepprepareBody(nexnextOffSet, data)
+	storedOffset := binary.BigEndian.Uint64(data[:8])
+	
+	if storedOffset != offset {
+		return Record{}, fmt.Errorf("offset mismatch: expected %d, got %d", offset, storedOffset)
+	}
+	
+	if !validateSum(data) {
+		return Record{}, fmt.Errorf("checksum mismatch")
+	}
+	
+	return Record{
+		Offset: storedOffset,
+		Data: data[8 : len(data)-32],
+	}, nil
 }
