@@ -141,3 +141,38 @@ func (w *MinWAL) Read(ctx context.Context, offset uint64) (Record, error) {
 		Data: data[8 : len(data)-32],
 	}, nil
 }
+
+func (w *MinWAL) LastRecord(ctx context.Context) (Record, error) {
+	input := minio.ListObjectsOptions{
+		Prefix: w.prefix + "/",
+		Recursive: true,
+	}
+	
+	// MinIO's ListObjects returns a channel that automatically handles pagination
+	objectCh := w.client.ListObjects(ctx, w.bucket, input)
+	
+	var maxOffset uint64 = 0
+	found := false
+	
+	for obj := range objectCh {
+		if obj.Err != nil {
+			return Record{}, fmt.Errorf("failed to list objects from MinIO")
+		}
+		// parse the offset from the key (e.g., "wal/xxxxxxxxxx")
+		offset, err := w.getOffsetFromKey(obj.Key)
+		if err != nil {
+			return Record{}, fmt.Errorf("failed to parse offset from key")
+		}
+		
+		if offset > maxOffset {
+			maxOffset = offset
+		}
+		found = true
+	}
+	if !found {
+		return Record{}, fmt.Errorf("WAL is empty")
+	}
+	w.length = maxOffset
+	
+	return w.Read(ctx, maxOffset)
+}
