@@ -126,7 +126,7 @@ func (w *MinWAL) Read(ctx context.Context, offset uint64) (Record, error) {
 		return Record{}, fmt.Errorf("invalid data, data is too short")
 	}
 	
-	storedOffset := binary.BigEndian.Uint64(data[:8])
+	storedOffset := binary.BigEndian.Uint64(data[:8]) // first 8 bytes are offset from data 
 	
 	if storedOffset != offset {
 		return Record{}, fmt.Errorf("offset mismatch: expected %d, got %d", offset, storedOffset)
