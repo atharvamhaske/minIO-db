@@ -43,12 +43,13 @@ func checkSum(buff *bytes.Buffer) [32]byte {
 	return sha256.Sum256(buff.Bytes())
 }
 
-// total trailer size is 36 bytes in which checksum is only 32 bytes and rest 4 bytes are mysterious
-// in most database implementations these 4 bytes are usually Record Length or TimeStamp.
 func validateSum(data []byte) bool {
+	if len(data) < checkSumSize {
+		return false
+	}
 	var storedCheckSum [32]byte
-	copy(storedCheckSum[:], data[len(data)-32:]) //adding : converts the fixed size array into slice so copy can write into it
-	recordData := data[:len(data)-36]
+	copy(storedCheckSum[:], data[len(data)-checkSumSize:]) // adding : converts the fixed size array into slice so copy can write into it
+	recordData := data[:len(data)-checkSumSize]
 	return storedCheckSum == checkSum(bytes.NewBuffer(recordData))
 }
 
