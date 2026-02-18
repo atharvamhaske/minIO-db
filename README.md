@@ -66,8 +66,14 @@ sequenceDiagram
 Interface in `wal.go`:
 
 - `Append(ctx, data) (offset, error)`
+- `AppendExpected(ctx, expectedOffset, data) (offset, error)`
 - `Read(ctx, offset) (Record, error)`
 - `LastRecord(ctx) (Record, error)`
+
+`AppendExpected` behavior:
+- Writes only to the exact `expectedOffset` key using a create-if-absent condition.
+- If that key already exists and has the same payload, it returns success (idempotent retry).
+- If that key exists with different payload, it returns an error.
 
 Implementation in `wal_min.go`:
 - `NewWAL(client, bucket, prefix) *MinWAL`
