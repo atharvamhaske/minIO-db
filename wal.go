@@ -9,6 +9,7 @@ type Record struct {
 
 type WAL interface {
 	Append(ctx context.Context, data []byte) (uint64, error)
+	AppendExpected(ctx context.Context, expectedOffset uint64, data []byte) (uint64, error)
 	Read(ctx context.Context, offset uint64) (Record, error)
 	LastRecord(ctx context.Context) (Record, error)
 }

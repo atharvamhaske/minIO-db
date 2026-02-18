@@ -113,3 +113,12 @@ func TestValidateSumFailsWhenBodyIsTampered(t *testing.T) {
 		t.Fatal("expected validateSum to fail for tampered payload")
 	}
 }
+
+func TestAppendExpectedRejectsZeroOffset(t *testing.T) {
+	w := &MinWAL{}
+
+	_, err := w.AppendExpected(t.Context(), 0, []byte("payload"))
+	if err == nil {
+		t.Fatal("expected error for offset 0")
+	}
+}

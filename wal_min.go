@@ -106,6 +106,55 @@ func (w *MinWAL) Append(ctx context.Context, data []byte) (uint64, error) {
 	return nextOffSet, nil
 }
 
+// AppendExpected appends data at an exact offset.
+// If the same offset already exists with identical payload, it returns success (idempotent retry).
+func (w *MinWAL) AppendExpected(ctx context.Context, expectedOffset uint64, data []byte) (uint64, error) {
+	if expectedOffset == 0 {
+		return 0, fmt.Errorf("expected offset must be >= 1")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	buff := prepareBody(expectedOffset, data)
+	input := &minio.PutObjectOptions{
+		ContentType: "application/octet-stream",
+	}
+	input.SetMatchETagExcept("*")
+
+	_, err := w.client.PutObject(
+		ctx,
+		w.bucket,
+		w.getObjectKey(expectedOffset),
+		bytes.NewReader(buff),
+		int64(len(buff)),
+		*input,
+	)
+	if err == nil {
+		if expectedOffset > w.length {
+			w.length = expectedOffset
+		}
+		return expectedOffset, nil
+	}
+
+	// Object already exists. Check if this is a retry of the same append request.
+	if minio.ToErrorResponse(err).Code == minio.PreconditionFailed {
+		existing, readErr := w.Read(ctx, expectedOffset)
+		if readErr != nil {
+			return 0, fmt.Errorf("append expected offset exists but could not be read: %w", readErr)
+		}
+		if bytes.Equal(existing.Data, data) {
+			if expectedOffset > w.length {
+				w.length = expectedOffset
+			}
+			return expectedOffset, nil
+		}
+		return 0, fmt.Errorf("offset %d already committed with different payload", expectedOffset)
+	}
+
+	return 0, fmt.Errorf("failed to put object on MinIO at expected offset %d: %w", expectedOffset, err)
+}
+
 func (w *MinWAL) Read(ctx context.Context, offset uint64) (Record, error) {
 	key := w.getObjectKey(offset)
 	input := minio.GetObjectOptions{}
