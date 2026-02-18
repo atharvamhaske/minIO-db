@@ -175,35 +175,35 @@ func (w *MinWAL) Read(ctx context.Context, offset uint64) (Record, error) {
 	if len(data) < 40 {
 		return Record{}, fmt.Errorf("invalid data, data is too short")
 	}
-	
-	storedOffset := binary.BigEndian.Uint64(data[:8]) // first 8 bytes are offset from data 
-	
+
+	storedOffset := binary.BigEndian.Uint64(data[:8]) // first 8 bytes are offset from data
+
 	if storedOffset != offset {
 		return Record{}, fmt.Errorf("offset mismatch: expected %d, got %d", offset, storedOffset)
 	}
-	
+
 	if !validateSum(data) {
 		return Record{}, fmt.Errorf("checksum mismatch")
 	}
-	
+
 	return Record{
 		Offset: storedOffset,
-		Data: data[8 : len(data)-32],
+		Data:   data[8 : len(data)-32],
 	}, nil
 }
 
 func (w *MinWAL) LastRecord(ctx context.Context) (Record, error) {
 	input := minio.ListObjectsOptions{
-		Prefix: w.prefix + "/",
+		Prefix:    w.prefix + "/",
 		Recursive: true,
 	}
-	
+
 	// MinIO's ListObjects returns a channel that automatically handles pagination
 	objectCh := w.client.ListObjects(ctx, w.bucket, input)
-	
+
 	var maxOffset uint64 = 0
 	found := false
-	
+
 	for obj := range objectCh {
 		if obj.Err != nil {
 			return Record{}, fmt.Errorf("failed to list objects from MinIO")
@@ -213,7 +213,7 @@ func (w *MinWAL) LastRecord(ctx context.Context) (Record, error) {
 		if err != nil {
 			return Record{}, fmt.Errorf("failed to parse offset from key")
 		}
-		
+
 		if offset > maxOffset {
 			maxOffset = offset
 		}
@@ -223,6 +223,6 @@ func (w *MinWAL) LastRecord(ctx context.Context) (Record, error) {
 		return Record{}, fmt.Errorf("WAL is empty")
 	}
 	w.length = maxOffset
-	
+
 	return w.Read(ctx, maxOffset)
 }
